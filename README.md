@@ -1,3 +1,8 @@
+# What's different from orginal project https://github.com/oidcproxydotnet/OidcProxy.Net:
+Endpoints are compatible to https://oauth2-proxy.github.io/oauth2-proxy/features/endpoints
+The goal is to build a drop in replacement for oauth2-proxy with same configuration files and flags, but to add a backchannel logout support (https://openid.net/specs/openid-connect-backchannel-1_0.html).
+Backchannel logout can work only with Redis backend.
+
 # OidcProxy.Net
 
 ![](https://github.com/thecloudnativewebapp/GoCloudNative.Bff/actions/workflows/ci.yml/badge.svg)
