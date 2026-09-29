@@ -13,20 +13,23 @@ internal static class WebApplicationExtensions
             return;
         }
 
+        // Wrap from the last registration outwards, so the first registered middleware runs first.
+        var outermostLast = types.Reverse().ToArray();
+
         app.UseEndpoints(e =>
         {
             e.MapReverseProxy(x => x.Use((context, next) =>
             {
-                var delegates = new List<Func<HttpContext, Task>> { _ => next() };
+                Func<HttpContext, Task> pipeline = _ => next();
 
-                foreach (var type in types)
+                foreach (var type in outermostLast)
                 {
                     var instance = (IYarpMiddleware)x.ApplicationServices.GetRequiredService(type);
-                    var previous = delegates.Last();
-                    delegates.Add(ctx => instance.Apply(ctx, previous));
+                    var inner = pipeline;
+                    pipeline = ctx => instance.Apply(ctx, inner);
                 }
 
-                return delegates.Last()(context);
+                return pipeline(context);
             }));
         });
     }
