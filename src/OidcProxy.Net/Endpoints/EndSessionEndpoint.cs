@@ -26,35 +26,7 @@ internal static class EndSessionEndpoint
             return Results.Redirect(baseAddress);
         }
 
-        await logger.InformAsync("Revoking access_token.");
-        var accessToken = context.Session.GetAccessToken();
-
-        try
-        {
-            await identityProvider.RevokeAsync(accessToken!, context.TraceIdentifier);
-        }
-        catch (Exception e) when (e is ApplicationException || e is ArgumentException)
-        {
-            await logger.WarnAsync($"Unexpected: Failed to revoke access_token during end-session. " +
-                              $"Access_token will be removed from the OidcProxy.Net http-session. " +
-                              $"This event is only visible in the logs. " +
-                              $"The following error occurred: {e}");
-        }
-
-        await logger.InformAsync("Revoking refresh_token.");
-        var refreshToken = authSession.GetRefreshToken();
-
-        try
-        {
-            await identityProvider.RevokeAsync(refreshToken!, context.TraceIdentifier);
-        }
-        catch (Exception e) when (e is ApplicationException || e is ArgumentException)
-        {
-            await logger.WarnAsync($"Unexpected: Failed to revoke refresh_token during end-session. " +
-                              $"Refresh_token will be removed from the OidcProxy.Net http-session. " +
-                              $"This event is only visible in the logs. " +
-                              $"The following error occurred: {e}");
-        }
+        await TokenRevocation.RevokeSessionTokensAsync(authSession, identityProvider, logger, context.TraceIdentifier);
 
         string? idToken = null;
         if (authSession.HasIdToken())
@@ -63,7 +35,7 @@ internal static class EndSessionEndpoint
         }
 
         context.Session.Clear();
-        
+
         var cookieOptions = new CookieOptions
         {
             HttpOnly = true,
@@ -72,12 +44,13 @@ internal static class EndSessionEndpoint
             Secure = proxyOptions.CookieSecure ?? false,
             SameSite = proxyOptions.CookieSameSite ?? SameSiteMode.Unspecified
         };
-        
+
         context.Response.Cookies.Delete(proxyOptions.CookieName, cookieOptions);
 
         var endSessionEndpoint = await identityProvider.GetEndSessionEndpointAsync(idToken, baseAddress);
 
-        await logger.InformAsync($"Redirect to {endSessionEndpoint}");
+        // The end-session URL carries the id_token in id_token_hint.
+        await logger.InformAsync($"Redirect to {LogRedaction.WithoutQuery(endSessionEndpoint)}");
 
         return Results.Redirect(endSessionEndpoint.ToString());
     }

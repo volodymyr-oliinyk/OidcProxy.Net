@@ -23,31 +23,39 @@ internal static class SessionCompleteEndpoint
         [FromServices] IAuthenticationCallbackHandler authenticationCallbackHandler)
     {
         var pendingKey = context.Request.Query["key"].FirstOrDefault();
-        
+
         if (string.IsNullOrEmpty(pendingKey))
         {
             await logger.WarnAsync("Session complete called without pending key.");
             return Results.Redirect(proxyOptions.ErrorPage.ToString());
         }
 
-        var (tokenResponse, userPreferredLandingPage) = await pendingTokenStore.RetrieveAndRemoveAsync(pendingKey);
-        
-        if (tokenResponse == null)
+        var pending = await pendingTokenStore.RetrieveAndRemoveAsync(pendingKey);
+
+        if (pending == null)
         {
             await logger.WarnAsync("Pending token not found or expired. Possible replay attack or timeout.");
             return Results.Redirect(proxyOptions.ErrorPage.ToString());
         }
 
+        if (pending.CodeChallenge != null)
+        {
+            // A code issued to a native app is bound to its PKCE verifier and must be redeemed at /native/token.
+            // Redeeming it through the browser would let whoever intercepted the app redirect take over the login.
+            await logger.WarnAsync("Pending token was issued to a native client and cannot be redeemed through the browser.");
+            return Results.Redirect(proxyOptions.ErrorPage.ToString());
+        }
+
         // Save tokens to the new session
-        await authSession.SaveAsync(tokenResponse);
+        await authSession.SaveAsync(pending.TokenResponse);
 
         await logger.InformAsync($"Session regeneration complete. Redirect({proxyOptions.LandingPage})");
 
-        var jwtPayload = tokenParser.ParseJwtPayload(tokenResponse.access_token);
+        var jwtPayload = tokenParser.ParseJwtPayload(pending.TokenResponse.access_token);
 
         return await authenticationCallbackHandler.OnAuthenticated(context,
             jwtPayload,
             proxyOptions.LandingPage.ToString(),
-            userPreferredLandingPage);
+            pending.UserPreferredLandingPage);
     }
 }

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.Caching.Distributed;
 using OidcProxy.Net.IdentityProviders;
+using OidcProxy.Net.ModuleInitializers;
 
 namespace OidcProxy.Net.OpenIdConnect;
 
@@ -11,15 +12,16 @@ namespace OidcProxy.Net.OpenIdConnect;
 internal class PendingTokenStore : IPendingTokenStore
 {
     private readonly IDistributedCache _cache;
-    private static readonly TimeSpan TokenTtl = TimeSpan.FromMinutes(1);
+    private readonly ProxyOptions _options;
     private const string KeyPrefix = "pending_token:";
 
-    public PendingTokenStore(IDistributedCache cache)
+    public PendingTokenStore(IDistributedCache cache, ProxyOptions options)
     {
         _cache = cache;
+        _options = options;
     }
 
-    public async Task StoreAsync(string key, TokenResponse tokenResponse, string? userPreferredLandingPage)
+    public async Task StoreAsync(string key, TokenResponse tokenResponse, string? userPreferredLandingPage, string? codeChallenge = null, TimeSpan? ttl = null)
     {
         var entry = new PendingTokenEntry
         {
@@ -27,28 +29,29 @@ internal class PendingTokenStore : IPendingTokenStore
             IdToken = tokenResponse.id_token,
             RefreshToken = tokenResponse.refresh_token,
             ExpiryDate = tokenResponse.ExpiryDate,
-            UserPreferredLandingPage = userPreferredLandingPage
+            UserPreferredLandingPage = userPreferredLandingPage,
+            CodeChallenge = codeChallenge
         };
 
         var json = JsonSerializer.Serialize(entry);
-        
+
         await _cache.SetStringAsync(
             KeyPrefix + key,
             json,
             new DistributedCacheEntryOptions
             {
-                AbsoluteExpirationRelativeToNow = TokenTtl
+                AbsoluteExpirationRelativeToNow = ttl ?? _options.PendingTokenTtl
             });
     }
 
-    public async Task<(TokenResponse? TokenResponse, string? UserPreferredLandingPage)> RetrieveAndRemoveAsync(string key)
+    public async Task<PendingToken?> RetrieveAndRemoveAsync(string key)
     {
         var fullKey = KeyPrefix + key;
         var json = await _cache.GetStringAsync(fullKey);
-        
+
         if (string.IsNullOrEmpty(json))
         {
-            return (null, null);
+            return null;
         }
 
         // Remove immediately to prevent replay
@@ -57,7 +60,7 @@ internal class PendingTokenStore : IPendingTokenStore
         var entry = JsonSerializer.Deserialize<PendingTokenEntry>(json);
         if (entry == null)
         {
-            return (null, null);
+            return null;
         }
 
         var tokenResponse = new TokenResponse(
@@ -67,7 +70,7 @@ internal class PendingTokenStore : IPendingTokenStore
             entry.ExpiryDate
         );
 
-        return (tokenResponse, entry.UserPreferredLandingPage);
+        return new PendingToken(tokenResponse, entry.UserPreferredLandingPage, entry.CodeChallenge);
     }
 
     private class PendingTokenEntry
@@ -77,5 +80,6 @@ internal class PendingTokenStore : IPendingTokenStore
         public string? RefreshToken { get; set; }
         public DateTime ExpiryDate { get; set; }
         public string? UserPreferredLandingPage { get; set; }
+        public string? CodeChallenge { get; set; }
     }
 }

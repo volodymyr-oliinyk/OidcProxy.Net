@@ -6,6 +6,7 @@ using OidcProxy.Net.Jwt;
 using OidcProxy.Net.Jwt.SignatureValidation;
 using OidcProxy.Net.Logging;
 using OidcProxy.Net.ModuleInitializers;
+using OidcProxy.Net.Native;
 using OidcProxy.Net.OpenIdConnect;
 using System.Security.Cryptography;
 
@@ -28,10 +29,18 @@ internal static class CallbackEndpoint
         {
             var userPreferredLandingPage = authSession.GetUserPreferredLandingPage();
 
+            // Present when the login was started by a native (iOS/Android) app through /{endpoint}/native/start.
+            var nativeLogin = authSession.GetNativeLoginContext();
+
             var code = context.Request.Query["code"].SingleOrDefault();
             if (string.IsNullOrEmpty(code))
             {
                 await logger.InformAsync("Unable to obtain access token. Querystring parameter 'code' has no value.");
+
+                if (nativeLogin != null)
+                {
+                    return await FailNativeLogin(authSession, logger, nativeLogin, "access_denied");
+                }
 
                 var redirectUri = $"{proxyOptions.ErrorPage}{context.Request.QueryString}";
                 return await authenticationCallbackHandler.OnAuthenticationFailed(context, redirectUri, userPreferredLandingPage);
@@ -47,9 +56,19 @@ internal static class CallbackEndpoint
 
             if (!(await jwtSignatureValidator.Validate(tokenResponse.access_token)))
             {
+                if (nativeLogin != null)
+                {
+                    return await FailNativeLogin(authSession, logger, nativeLogin, "invalid_token");
+                }
+
                 return await authenticationCallbackHandler.OnAuthenticationFailed(context,
                     proxyOptions.LandingPage.ToString(),
                     userPreferredLandingPage);
+            }
+
+            if (nativeLogin != null)
+            {
+                return await CompleteNativeLogin(authSession, logger, pendingTokenStore, proxyOptions, nativeLogin, tokenResponse);
             }
 
             // Phase 1: Session regeneration to prevent session fixation attacks
@@ -90,5 +109,46 @@ internal static class CallbackEndpoint
         {
             await authSession.RemoveCodeVerifierAsync();
         }
+    }
+
+    /// <summary>
+    /// Native flow: the tokens are parked under a one-time code that is bound to the PKCE challenge of the app, and
+    /// the browser is sent back into the app. The browser session never holds the tokens. The app redeems the code
+    /// from its own HTTP client at /{endpoint}/native/token, which creates the session and sets the cookie there.
+    /// </summary>
+    private static async Task<IResult> CompleteNativeLogin(AuthSession authSession,
+        ILogger logger,
+        IPendingTokenStore pendingTokenStore,
+        ProxyOptions proxyOptions,
+        NativeLoginContext nativeLogin,
+        TokenResponse tokenResponse)
+    {
+        var oneTimeCode = Pkce.GenerateCode();
+        await pendingTokenStore.StoreAsync(oneTimeCode, tokenResponse, null, nativeLogin.CodeChallenge, proxyOptions.NativeCodeTtl);
+        await authSession.RemoveNativeLoginContextAsync();
+
+        var location = NativeRedirectUri.AppendQuery(nativeLogin.RedirectUri,
+            KeyValuePair.Create("code", oneTimeCode),
+            KeyValuePair.Create("state", nativeLogin.State));
+
+        await logger.InformAsync("Native login: issued a one-time code. Redirecting to the native application.");
+
+        return Results.Redirect(location);
+    }
+
+    private static async Task<IResult> FailNativeLogin(AuthSession authSession,
+        ILogger logger,
+        NativeLoginContext nativeLogin,
+        string error)
+    {
+        await authSession.RemoveNativeLoginContextAsync();
+
+        var location = NativeRedirectUri.AppendQuery(nativeLogin.RedirectUri,
+            KeyValuePair.Create("error", error),
+            KeyValuePair.Create("state", nativeLogin.State));
+
+        await logger.WarnAsync($"Native login failed ({error}). Redirecting to the native application.");
+
+        return Results.Redirect(location);
     }
 }

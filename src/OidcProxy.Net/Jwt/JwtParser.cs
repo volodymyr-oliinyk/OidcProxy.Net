@@ -23,7 +23,7 @@ public class JwtParser : ITokenParser
             : JwtHeader.Base64UrlDeserialize(parts[0]);
     }
 
-    private static JwtPayload? ParsePayload(string? token)
+    internal static JwtPayload? ParsePayload(string? token)
     {
         if (string.IsNullOrEmpty(token))
         {
@@ -62,7 +62,8 @@ public class JwtParser : ITokenParser
         var chunks = token.Split(".");
         if (chunks.Length != 3)
         {
-            throw new NotSupportedException($"Invalid token: {token}");
+            // Never put the token itself in the message: exceptions end up in the logs.
+            throw new NotSupportedException($"Invalid token: a JWT has 3 dot-separated segments, this value has {chunks.Length}.");
         }
 
         return chunks[section];

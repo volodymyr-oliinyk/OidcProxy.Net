@@ -1,5 +1,7 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using OidcProxy.Net.IdentityProviders;
+using OidcProxy.Net.Native;
 using OidcProxy.Net.OpenIdConnect;
 
 namespace OidcProxy.Net;
@@ -24,7 +26,9 @@ internal class AuthSession : IAuthSession
     private static string ExpiryKey => $"{typeof(IIdentityProvider)}-expires";
     
     private static string UserPreferredLandingPageKey => $"{typeof(IIdentityProvider)}-user_preferred_landing_page";
-    
+
+    private static string NativeLoginKey => $"{typeof(IIdentityProvider)}-native_login";
+
     public ISession Session { get; private set; }
     
     /// <summary>
@@ -153,6 +157,38 @@ internal class AuthSession : IAuthSession
     public async Task RemoveCodeVerifierAsync() => await this.RemoveAsync(VerifierKey);
 
     /// <summary>
+    /// Collects the context of a login that was started by a native application, if any.
+    /// </summary>
+    public NativeLoginContext? GetNativeLoginContext()
+    {
+        var json = Session?.GetString(NativeLoginKey);
+        if (string.IsNullOrEmpty(json))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<NativeLoginContext>(json);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Stores the context of a login that was started by a native application.
+    /// </summary>
+    public async Task SetNativeLoginContextAsync(NativeLoginContext context)
+        => await this.SaveAsync(NativeLoginKey, JsonSerializer.Serialize(context));
+
+    /// <summary>
+    /// Removes the native login context from the http session.
+    /// </summary>
+    public async Task RemoveNativeLoginContextAsync() => await this.RemoveAsync(NativeLoginKey);
+
+    /// <summary>
     /// Save the token response to the Http Session.
     /// </summary>
     /// <param name="tokenResponse">The response received from the /token endpoint.</param>
@@ -203,6 +239,9 @@ internal class AuthSession : IAuthSession
     public async Task<AuthorizeRequest> InitiateAuthenticationSequence(string userPreferredLandingPage)
     {
         await SetUserPreferredLandingPageAsync(userPreferredLandingPage);
+
+        // A new sequence supersedes any native login that was started earlier in this browser session.
+        await RemoveNativeLoginContextAsync();
 
         var redirectUri = _redirectUriFactory.DetermineRedirectUri(
             _httpContextAccessor.HttpContext, 

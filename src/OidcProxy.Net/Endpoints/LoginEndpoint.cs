@@ -19,6 +19,13 @@ internal static class LoginEndpoint
     {
         try
         {
+            // Discard whatever a previous (possibly attacker-planted) session contains before a new authentication
+            // sequence starts. The session key and its cookie are deliberately kept: the values stored below (landing
+            // page, PKCE code_verifier) must survive until /callback. The session is regenerated there, through the
+            // pending token store, and that regeneration is what defeats session fixation.
+            context.Session.Clear();
+            await context.Session.CommitAsync();
+
             if (options.EnableUserPreferredLandingPages || options.AllowedUserPreferredLandingPages.Any())
             {
                 try
@@ -30,12 +37,12 @@ internal static class LoginEndpoint
                     var userPreferredLandingPage = context.Request.Query["landingpage"];
                     await logger.WarnAsync($"Suspicious activity detected. User provided an invalid landing page at " +
                                       $"login. Value provided: \"{userPreferredLandingPage}\"");
-                    
+
                     context.Response.StatusCode = StatusCodes.Status400BadRequest;
                     return;
                 }
             }
-            
+
             var redirectUri = redirectUriFactory.DetermineRedirectUri(context, endpointName.ToString());
 
             var authorizeRequest = await identityProvider.GetAuthorizeUrlAsync(redirectUri);
@@ -45,22 +52,7 @@ internal static class LoginEndpoint
                 await authSession.SetCodeVerifierAsync(authorizeRequest.CodeVerifier);
             }
 
-            await logger.InformAsync($"Redirect({authorizeRequest.AuthorizeUri})");
-
-            // Regenerate session to prevent session fixation attacks
-            context.Session.Clear();
-            await context.Session.CommitAsync();
-
-            // Delete old session cookie to force new session ID generation
-            var cookieOptions = new CookieOptions
-            {
-                HttpOnly = true,
-                IsEssential = true,
-                Domain = options.CookieDomain,
-                Secure = options.CookieSecure ?? false,
-                SameSite = options.CookieSameSite ?? SameSiteMode.Unspecified
-            };
-            context.Response.Cookies.Delete(options.CookieName, cookieOptions);
+            await logger.InformAsync($"Redirect({LogRedaction.WithoutQuery(authorizeRequest.AuthorizeUri)})");
 
             context.Response.Redirect(authorizeRequest.AuthorizeUri.ToString());
         }
@@ -71,7 +63,7 @@ internal static class LoginEndpoint
         }
     }
 
-    private static async Task SaveUserPreferredLandingPage(HttpContext context, 
+    private static async Task SaveUserPreferredLandingPage(HttpContext context,
         AuthSession authSession,
         LandingPage[] allowedLandingPages)
     {
@@ -86,8 +78,8 @@ internal static class LoginEndpoint
 
         // If there is a whitelist of landing pages configured in the config, and if the user preferred landing page
         // is not in it, throw an exception
-        if (allowedLandingPages.Any() 
-            && !string.IsNullOrEmpty(userPreferredLandingPage) 
+        if (allowedLandingPages.Any()
+            && !string.IsNullOrEmpty(userPreferredLandingPage)
             && !allowedLandingPages.Any(x => x.Equals(userPreferredLandingPage)))
         {
             throw new NotSupportedException($"Will not redirect user to {userPreferredLandingPage}");

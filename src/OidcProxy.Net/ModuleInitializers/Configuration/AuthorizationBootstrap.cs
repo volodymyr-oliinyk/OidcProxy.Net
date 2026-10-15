@@ -90,6 +90,13 @@ internal class AuthorizationBootstrap : IBootstrap
     {
         app.UseRouting();
         app.UseRequestTimeouts();
+
+        if (!string.IsNullOrEmpty(options.NativeTokenRateLimitPolicy))
+        {
+            // Endpoint-specific rate limiting needs the endpoint metadata, so it has to run after routing.
+            app.UseRateLimiter();
+        }
+
         app.UseAuthentication();
         app.UseAuthorization();
     }

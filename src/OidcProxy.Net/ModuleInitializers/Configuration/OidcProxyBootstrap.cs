@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using OidcProxy.Net.Endpoints;
 using OidcProxy.Net.IdentityProviders;
 using OidcProxy.Net.Jwt.SignatureValidation;
@@ -9,15 +10,15 @@ using OidcProxy.Net.OpenIdConnect;
 
 namespace OidcProxy.Net.ModuleInitializers.Configuration;
 
-internal class OidcProxyBootstrap<TIdentityProvider, TIdentityProviderConfig>(TIdentityProviderConfig config) 
-    : IOidcProxyBootstrap 
+internal class OidcProxyBootstrap<TIdentityProvider, TIdentityProviderConfig>(TIdentityProviderConfig config)
+    : IOidcProxyBootstrap
     where TIdentityProvider : class, IIdentityProvider
     where TIdentityProviderConfig : class
 {
     private Type _callbackHandlerType = typeof(DefaultAuthenticationCallbackHandler);
 
     private Type _claimsTransformationType = typeof(DefaultClaimsTransformation);
-    
+
     public IOidcProxyBootstrap WithCallbackHandler<TCallbackHandler>()
         where TCallbackHandler : IAuthenticationCallbackHandler
     {
@@ -36,7 +37,12 @@ internal class OidcProxyBootstrap<TIdentityProvider, TIdentityProviderConfig>(TI
     {
         services
             .AddTransient<AnonymousAccessMiddleware>();
-        
+
+        // Route matchers used by the middleware. A host may register its own implementations after AddOidcProxy;
+        // the later registration wins, which keeps existing hosts unchanged.
+        services.TryAddSingleton<ISkipAuthRoutes>(_ => new SkipAuthRoutes(options.SkipAuthRoutes));
+        services.TryAddSingleton<IApiRoutes>(_ => new SkipAuthRoutes(options.ApiRoutes));
+
         services
             .AddSingleton<EndpointName>(_ => new EndpointName(options.EndpointName))
             .AddTransient<TokenRenewalMiddleware>()
@@ -47,14 +53,14 @@ internal class OidcProxyBootstrap<TIdentityProvider, TIdentityProviderConfig>(TI
 
         services
             .AddTransient<IRedirectUriFactory, RedirectUriFactory>();
-        
+
         services
             .AddHttpContextAccessor()
             .AddTransient<TokenFactory>()
             .AddTransient<AuthSession>()
             .AddTransient<IAuthSession, AuthSession>()
             .AddTransient<ILogger, DefaultLogger>();
-        
+
         services
             .AddTransient<Rs256SignatureValidator>();
 
@@ -69,7 +75,7 @@ internal class OidcProxyBootstrap<TIdentityProvider, TIdentityProviderConfig>(TI
         {
             app.UseMiddleware<AnonymousAccessMiddleware>();
         }
-        
-        app.MapAuthenticationEndpoints(options.EndpointName);
+
+        app.MapAuthenticationEndpoints(options);
     }
 }

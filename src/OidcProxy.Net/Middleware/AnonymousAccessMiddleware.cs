@@ -45,7 +45,7 @@ internal class AnonymousAccessMiddleware(
         
         var authorizeRequest = await authSession.InitiateAuthenticationSequence(currentPath);
         
-        await logger.InformAsync($"Redirect({authorizeRequest.AuthorizeUri})");
+        await logger.InformAsync($"Redirect({LogRedaction.WithoutQuery(authorizeRequest.AuthorizeUri)})");
         
         context.Response.Redirect(authorizeRequest.AuthorizeUri.ToString());
     }

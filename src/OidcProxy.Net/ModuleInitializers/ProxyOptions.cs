@@ -6,6 +6,7 @@ using OidcProxy.Net.Jwt;
 using OidcProxy.Net.Jwt.SignatureValidation;
 using OidcProxy.Net.Middleware;
 using OidcProxy.Net.ModuleInitializers.Configuration;
+using OidcProxy.Net.Native;
 using OidcProxy.Net.OpenIdConnect;
 using StackExchange.Redis;
 using Yarp.ReverseProxy.Configuration;
@@ -129,6 +130,56 @@ public class ProxyOptions
     public IEnumerable<string> ApiRoutes { get; set; } = new List<string>();
     public bool SkipJwtBearerTokens { get; set; }
 
+    /// <summary>
+    /// Exact-match allow-list of redirect URIs that native (iOS/Android) applications may use with
+    /// /{EndpointName}/native/start. Empty (the default) disables the native endpoints. Set it with SetNativeRedirectUris.
+    /// </summary>
+    public IReadOnlyList<string> NativeRedirectUris => _nativeRedirectUris;
+
+    /// <summary>
+    /// Where the identity provider sends the browser after /{EndpointName}/native/sign_out ends the IdP session,
+    /// for example com.example.app:/logout. Null (the default) keeps the post-logout redirect of the browser flow.
+    /// The identity provider must allow this URI as a post-logout redirect URI of the proxy client.
+    /// Set it with SetNativePostLogoutRedirectUri.
+    /// </summary>
+    public string? NativePostLogoutRedirectUri { get; private set; }
+
+    /// <summary>
+    /// Lifetime of the one-time code handed to a native application at the end of the browser login.
+    /// </summary>
+    public TimeSpan NativeCodeTtl { get; set; } = TimeSpan.FromMinutes(2);
+
+    /// <summary>
+    /// Lifetime of tokens parked between /callback and the request that establishes the session (browser flow).
+    /// </summary>
+    public TimeSpan PendingTokenTtl { get; set; } = TimeSpan.FromMinutes(1);
+
+    /// <summary>
+    /// Name of a rate-limiting policy (registered by the host with AddRateLimiter) to apply to
+    /// /{EndpointName}/native/token. Null disables rate limiting of that endpoint.
+    /// </summary>
+    public string? NativeTokenRateLimitPolicy { get; set; }
+
+    /// <summary>
+    /// Tolerance applied when checking the exp and nbf claims of access tokens.
+    /// </summary>
+    public TimeSpan JwtClockSkew { get; set; } = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// When not empty, access tokens must carry one of these values in the iss claim.
+    /// </summary>
+    public IEnumerable<string> ValidIssuers { get; set; } = new List<string>();
+
+    /// <summary>
+    /// When not empty, access tokens must carry one of these values in the aud claim.
+    /// Include the client id so that back-channel logout tokens keep validating.
+    /// </summary>
+    public IEnumerable<string> ValidAudiences { get; set; } = new List<string>();
+
+    internal bool NativeLoginEnabled => _nativeRedirectUris.Count > 0;
+
+    private readonly List<string> _nativeRedirectUris = new();
+
     #endregion
 
     /// <summary>
@@ -204,6 +255,67 @@ public class ProxyOptions
         }
 
         AllowedUserPreferredLandingPages = allowedLandingPages.ToArray();
+    }
+
+    /// <summary>
+    /// Set the exact-match allow-list of redirect URIs for native (iOS/Android) applications. Configuring at least
+    /// one URI enables the /{EndpointName}/native/* endpoints. Allowed forms are claimed https URIs and private-use
+    /// schemes based on a reverse domain name (RFC 8252, section 7).
+    /// </summary>
+    /// <param name="redirectUris">The redirect URIs, compared by exact string match at runtime.</param>
+    public void SetNativeRedirectUris(IEnumerable<string>? redirectUris)
+    {
+        _nativeRedirectUris.Clear();
+
+        if (redirectUris == null)
+        {
+            return;
+        }
+
+        foreach (var value in redirectUris)
+        {
+            var redirectUri = value?.Trim();
+            if (string.IsNullOrEmpty(redirectUri))
+            {
+                continue;
+            }
+
+            if (!NativeRedirectUri.IsValid(redirectUri, out var reason))
+            {
+                throw new NotSupportedException("GNC-B-7c1e2a9d0f44: " +
+                                                "Cannot initialize OidcProxy.Net. " +
+                                                $"Invalid native redirect uri \"{redirectUri}\". {reason}");
+            }
+
+            if (!_nativeRedirectUris.Contains(redirectUri, StringComparer.Ordinal))
+            {
+                _nativeRedirectUris.Add(redirectUri);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Set the URI the identity provider redirects to after a native sign-out. The same forms as for
+    /// SetNativeRedirectUris are allowed: a claimed https URI or a reverse-domain private-use scheme.
+    /// </summary>
+    /// <param name="postLogoutRedirectUri">The URI, or null/empty to keep the browser-flow post-logout redirect.</param>
+    public void SetNativePostLogoutRedirectUri(string? postLogoutRedirectUri)
+    {
+        var value = postLogoutRedirectUri?.Trim();
+        if (string.IsNullOrEmpty(value))
+        {
+            NativePostLogoutRedirectUri = null;
+            return;
+        }
+
+        if (!NativeRedirectUri.IsValid(value, out var reason))
+        {
+            throw new NotSupportedException("GNC-B-3f9a6d2b8e51: " +
+                                            "Cannot initialize OidcProxy.Net. " +
+                                            $"Invalid native post-logout redirect uri \"{value}\". {reason}");
+        }
+
+        NativePostLogoutRedirectUri = value;
     }
 
     /// <summary>

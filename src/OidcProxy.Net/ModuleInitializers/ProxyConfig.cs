@@ -22,12 +22,54 @@ public class ProxyConfig : IAppSettingsSection
     public bool? CookieSecure { get; set; }
 
     public string? CookieDomain { get; set; }
-    
+
     public YarpConfig? ReverseProxy { get; set; }
 
     public IList<string> SkipAuthRoutes { get; set; } = new List<string>();
 
     public IList<string> ApiRoutes { get; set; } = new List<string>();
+
+    /// <summary>
+    /// Exact-match allow-list of redirect URIs for native (iOS/Android) logins. Configuring at least one enables
+    /// the /{EndpointName}/native/* endpoints.
+    /// </summary>
+    public IList<string> NativeRedirectUris { get; set; } = new List<string>();
+
+    /// <summary>
+    /// Where the identity provider redirects after a native sign-out, for example com.example.app:/logout.
+    /// Default: the post-logout redirect of the browser flow.
+    /// </summary>
+    public string? NativePostLogoutRedirectUri { get; set; }
+
+    /// <summary>
+    /// Lifetime of the one-time code handed to a native application. Default: 2 minutes.
+    /// </summary>
+    public TimeSpan? NativeCodeTtl { get; set; }
+
+    /// <summary>
+    /// Lifetime of tokens parked between /callback and session completion. Default: 1 minute.
+    /// </summary>
+    public TimeSpan? PendingTokenTtl { get; set; }
+
+    /// <summary>
+    /// Name of a host-registered rate-limiting policy for /{EndpointName}/native/token.
+    /// </summary>
+    public string? NativeTokenRateLimitPolicy { get; set; }
+
+    /// <summary>
+    /// Tolerance applied to the exp and nbf claims of access tokens. Default: 60 seconds.
+    /// </summary>
+    public TimeSpan? JwtClockSkew { get; set; }
+
+    /// <summary>
+    /// When not empty, access tokens must carry one of these values in the iss claim.
+    /// </summary>
+    public IList<string> ValidIssuers { get; set; } = new List<string>();
+
+    /// <summary>
+    /// When not empty, access tokens must carry one of these values in the aud claim.
+    /// </summary>
+    public IList<string> ValidAudiences { get; set; } = new List<string>();
 
     public virtual bool Validate(out IEnumerable<string> errors)
     {
@@ -43,6 +85,7 @@ public class ProxyConfig : IAppSettingsSection
         AssignIfNotNull(CookieName, cookieName => options.CookieName = cookieName);
         AssignIfNotNull(NameClaim, nameClaim => options.NameClaim = nameClaim);
         AssignIfNotNull(RoleClaim, roleClaim => options.RoleClaim = roleClaim);
+        AssignIfNotNull(NativeTokenRateLimitPolicy, policy => options.NativeTokenRateLimitPolicy = policy);
 
         options.Mode = Mode;
         options.EnableUserPreferredLandingPages = EnableUserPreferredLandingPages;
@@ -55,12 +98,31 @@ public class ProxyConfig : IAppSettingsSection
         options.CookieDomain = CookieDomain;
         options.ApiRoutes = ApiRoutes;
         options.SkipJwtBearerTokens = SkipJwtBearerTokens;
+        options.SetNativeRedirectUris(NativeRedirectUris);
+        options.SetNativePostLogoutRedirectUri(NativePostLogoutRedirectUri);
+        options.ValidIssuers = ValidIssuers;
+        options.ValidAudiences = ValidAudiences;
 
         if (SessionIdleTimeout.HasValue)
         {
             options.SessionIdleTimeout = SessionIdleTimeout.Value;
         }
-        
+
+        if (NativeCodeTtl.HasValue)
+        {
+            options.NativeCodeTtl = NativeCodeTtl.Value;
+        }
+
+        if (PendingTokenTtl.HasValue)
+        {
+            options.PendingTokenTtl = PendingTokenTtl.Value;
+        }
+
+        if (JwtClockSkew.HasValue)
+        {
+            options.JwtClockSkew = JwtClockSkew.Value;
+        }
+
         if (options.Mode != Mode.AuthenticateOnly)
         {
             var routes = ReverseProxy?.Routes.ToRouteConfig();
