@@ -13,7 +13,11 @@ internal class JwtSignatureValidator(IIdentityProvider identityProvider,
     Hs256SignatureValidator hs256SignatureValidator,
     ProxyOptions proxyOptions) : IJwtSignatureValidator
 {
-    public virtual async Task<bool> Validate(string? token)
+    public virtual Task<bool> Validate(string? token) => ValidateAsync(token, requireExpiration: true);
+
+    public virtual Task<bool> ValidateLogoutToken(string? token) => ValidateAsync(token, requireExpiration: false);
+
+    private async Task<bool> ValidateAsync(string? token, bool requireExpiration)
     {
         if (string.IsNullOrEmpty(token))
         {
@@ -37,11 +41,17 @@ internal class JwtSignatureValidator(IIdentityProvider identityProvider,
                 return false;
             }
 
-            // The decrypted content is normally a signed JWT. Its signature is not verified here (unchanged
-            // behaviour: the JWE itself is integrity protected), but its time, issuer and audience claims are.
-            return !IsJws(decrypted) || await ValidateClaimsAsync(decrypted);
+            // A signed JWT inside the JWE is verified like any other: when the encryption key is a public key,
+            // anyone can produce a JWE, so only the inner signature proves who issued the token. Content that is
+            // not a signed JWT is accepted as before (integrity comes from the encryption alone).
+            return !IsJws(decrypted) || await ValidateJwsAsync(decrypted, requireExpiration);
         }
 
+        return await ValidateJwsAsync(token, requireExpiration);
+    }
+
+    private async Task<bool> ValidateJwsAsync(string token, bool requireExpiration)
+    {
         var header = JwtParser.ParseJwtHeader(token);
         if (header == null)
         {
@@ -90,15 +100,15 @@ internal class JwtSignatureValidator(IIdentityProvider identityProvider,
             }
         }
 
-        return isSignatureValid && await ValidateClaimsAsync(token);
+        return isSignatureValid && await ValidateClaimsAsync(token, requireExpiration);
     }
 
     /// <summary>
     /// A valid signature only proves who issued the token. This checks that the token is current (exp, nbf) and,
     /// when configured, that it comes from an expected issuer and is meant for this proxy (iss, aud).
-    /// exp is optional on purpose: OpenID Connect back-channel logout tokens may omit it.
+    /// exp is required for access tokens; OpenID Connect back-channel logout tokens may omit it.
     /// </summary>
-    private async Task<bool> ValidateClaimsAsync(string jwt)
+    private async Task<bool> ValidateClaimsAsync(string jwt, bool requireExpiration)
     {
         JwtPayload? payload;
         try
@@ -114,6 +124,13 @@ internal class JwtSignatureValidator(IIdentityProvider identityProvider,
         {
             await logger.WarnAsync("The JWT signature is valid but its payload cannot be parsed. " +
                                    "The JWT is considered to be invalid.");
+            return false;
+        }
+
+        if (requireExpiration && !payload.Expiration.HasValue)
+        {
+            // Without exp a signed token would be valid forever.
+            await logger.WarnAsync("The JWT has no exp claim. The JWT is considered to be invalid.");
             return false;
         }
 

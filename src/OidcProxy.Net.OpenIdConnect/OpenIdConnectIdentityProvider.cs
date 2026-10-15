@@ -105,6 +105,12 @@ public class OpenIdConnectIdentityProvider(
         var openIdConfiguration = await GetDiscoveryDocument();
         var jwksUri = openIdConfiguration.jwks_uri;
 
+        // A forced refresh within the cooldown of the previous one falls back to the cached keys.
+        if (invalidateCache && !JwksRefreshThrottle.TryBeginForcedRefresh(cache, jwksUri ?? DiscoveryEndpointAddress))
+        {
+            invalidateCache = false;
+        }
+
         if (!invalidateCache && cache.TryGetValue(jwksUri, out var keySet) && keySet != null)
         {
             return (JsonWebKeySet)keySet;

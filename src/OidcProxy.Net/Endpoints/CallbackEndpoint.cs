@@ -32,6 +32,13 @@ internal static class CallbackEndpoint
             // Present when the login was started by a native (iOS/Android) app through /{endpoint}/native/start.
             var nativeLogin = authSession.GetNativeLoginContext();
 
+            if (nativeLogin != null && nativeLogin.IsExpired(DateTime.UtcNow))
+            {
+                // Do not exchange the code: the app gave up on this login long ago.
+                await logger.WarnAsync("Native login context expired before the callback. The code is not exchanged.");
+                return await FailNativeLogin(authSession, logger, nativeLogin, "access_denied");
+            }
+
             var code = context.Request.Query["code"].SingleOrDefault();
             if (string.IsNullOrEmpty(code))
             {

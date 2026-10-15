@@ -17,7 +17,9 @@ internal class AnonymousAccessMiddleware(
     public async Task InvokeAsync(HttpContext context, RequestDelegate next)
     {
         var currentPath = context.Request.Path + context.Request.QueryString;
-        if (currentPath.StartsWith(oidcProxyReservedEndpointName.ToString(), StringComparison.InvariantCultureIgnoreCase))
+
+        // Whole path segments only: /oauth2 and /oauth2/... are the proxy's own endpoints, /oauth2foo is not.
+        if (context.Request.Path.StartsWithSegments(oidcProxyReservedEndpointName.ToString(), StringComparison.OrdinalIgnoreCase))
         {
             await next(context);
             return;
