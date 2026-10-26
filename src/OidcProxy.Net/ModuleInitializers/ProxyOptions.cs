@@ -31,9 +31,18 @@ public class ProxyOptions
     private readonly YarpBootstrap _yarpBootstrap = new();
 
     private readonly AuthorizationBootstrap _authorizationBootstrap = new();
-    
+
+    private IBootstrap[]? _bootstraps;
+
     internal IEnumerable<IBootstrap> GetConfiguration()
     {
+        // Both AddOidcProxy and UseOidcProxy call this. Building it twice appended the YARP middleware list
+        // twice, so every IYarpMiddleware (TokenRenewalMiddleware included) ran more than once per request.
+        if (_bootstraps != null)
+        {
+            return _bootstraps;
+        }
+
         if (_oidcProxyBootstrap == null)
         {
             throw new NotSupportedException("Unable to bootstrap OidcProxy.Net. " +
@@ -59,10 +68,12 @@ public class ProxyOptions
             bootstraps.Add(_yarpBootstrap);
         }
 
-        return bootstraps
+        _bootstraps = bootstraps
             .Where(x => x != null)
             .Cast<IBootstrap>()
             .ToArray();
+
+        return _bootstraps;
     }
 
     #endregion
@@ -254,7 +265,7 @@ public class ProxyOptions
     }
     
     /// <summary>
-    /// Adds middleware into the YARP processing pipeline.
+    /// Adds middleware into the YARP processing pipeline. Middleware runs in registration order, after token renewal.
     /// </summary>
     /// <typeparam name="THandler">The type implementing the middleware.</typeparam>
     public void AddYarpMiddleware<THandler>() where THandler : IYarpMiddleware

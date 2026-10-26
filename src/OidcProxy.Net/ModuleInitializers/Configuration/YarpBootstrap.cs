@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using OidcProxy.Net.Middleware;
 using Yarp.ReverseProxy.Configuration;
 
@@ -7,7 +8,8 @@ namespace OidcProxy.Net.ModuleInitializers.Configuration;
 
 internal class YarpBootstrap : IBootstrap
 {
-    private readonly List<Type> _yarpMiddlewareRegistrations = [typeof(TokenRenewalMiddleware)];
+    // Seeded by ProxyOptions, whose list already starts with TokenRenewalMiddleware.
+    private readonly List<Type> _yarpMiddlewareRegistrations = [];
 
     private IList<Action<IReverseProxyBuilder>> _configuration = new List<Action<IReverseProxyBuilder>>();
 
@@ -15,9 +17,14 @@ internal class YarpBootstrap : IBootstrap
     {
         _yarpMiddlewareRegistrations.AddRange(handlerType);
     }
-    
+
     public void Configure(ProxyOptions options, IServiceCollection services)
     {
+        foreach (var type in _yarpMiddlewareRegistrations)
+        {
+            services.TryAddTransient(type);
+        }
+
         var proxyBuilder = services
             .AddReverseProxy();
             //.AddTransforms<HttpHeaderTransformation>();
